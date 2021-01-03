@@ -1,5 +1,7 @@
 # ESP8266-01 Firmware
 
+[Common info about ESP8266](https://github.com/RadioKey/Documentation#esp8266)
+
 ## Boot into flash mode
 
 * CH_PD has to be HIGH
