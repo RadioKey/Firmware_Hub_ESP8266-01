@@ -1,105 +1,74 @@
 #include <RCSwitch.h>
 #include <ESP8266WiFi.h>
-
-#define SECRET_WIFI_SSID "" // PLACE YOUR SSID HERE
-#define SECRET_WIFI_PASSWORD "" // PLACE YOUR PASSWORD HERE
-#define SECRET_CONTROLLER_HOST "" // PLACE YOUR CONTROLLER HOST HERE, Fot test: nc -v -l 80
-#define SECRET_CONTROLLER_PORT 80
+#include <PubSubClient.h>
+#include <WiFiManager.h>
+#include <secrets.h>
 
 int TRANSMITTER_PIN = 2;
-int LED_PIN = 1;
 
-const char* controllerHost = SECRET_CONTROLLER_HOST;
-const uint16_t controllerPort = SECRET_CONTROLLER_PORT;
-
-const char* ssid = SECRET_WIFI_SSID;
-const char* password = SECRET_WIFI_PASSWORD;
+char* commandsMqttTopicName = SECRET_MQTT_BROCKER_COMMANDS_TOPIC;
 
 // See https://github.com/sui77/rc-switch/ for details
 RCSwitch switcher = RCSwitch();
 
+// See https://github.com/knolleary/pubsubclient
+PubSubClient mqttClient;
+
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
 
   // configure switcher
   switcher.enableTransmit(TRANSMITTER_PIN);
-  switcher.setProtocol(350);
-  switcher.setPulseLength(309);
-  switcher.setRepeatTransmit(25);
 
-  // configure led
-  pinMode(LED_PIN, OUTPUT);
-  
-  // Configure WiFi
-  /* 
-   * Explicitly set the ESP8266 to be a WiFi-client, otherwise, it by default,
-   * would try to act as both a client and an access-point and could cause
-   * network-issues with your other WiFi-devices on your WiFi-network. 
-   */
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
+  // Wifi management
+  WiFiManager wifiManager;
+  wifiManager.setDebugOutput(false);
+  wifiManager.setConfigPortalTimeout(30);
+  wifiManager.autoConnect(
+    SECRET_WIFI_AUTOCONFIGURE_SSID, 
+    SECRET_WIFI_AUTOCONFIGURE_PASSWORD
+  );
 
-  Serial.print("Connecting WiFi");
-  
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-
-  Serial.println("");
-  Serial.print("WiFi connected. IP address: ");
-  Serial.println(WiFi.localIP());
+  // MQTT client
+  mqttClient.setServer(
+    SECRET_MQTT_BROCKER_HOST, 
+    SECRET_MQTT_BROCKER_PORT
+  );
+  mqttClient.setCallback(mqttCallback);
 }
 
-void loop() {
-  digitalWrite(LED_PIN, HIGH);
-
-  // try connect controller
-  WiFiClient client;
-  if (!client.connect(controllerHost, controllerPort)) {
-    Serial.println("connection failed");
-    delay(5000);
-    return;
+void loop() {  
+  if (!mqttClient.connected()) {
+    reconnectMqttClient();
   }
 
-  Serial.println("Sending request to server");
-  if (client.connected()) {
-    client.println("GET /commands?mac= HTTP/1.1");
-    client.print("Host: ");
-    client.println(SECRET_CONTROLLER_HOST);
-  }
+  mqttClient.loop();
+}
 
-  // wait for data to be available
-  unsigned long timeout = millis();
-  while (client.available() == 0) {
-    if (millis() - timeout > 5000) {
-      Serial.println(">>> Client Timeout !");
-      client.stop();
-      delay(60000);
-      return;
-    }
-  }
-
-  // read code from controller
-  char ch;
-  while (client.available()) {
-    ch = static_cast<char>(client.read());
-    Serial.print(ch);
-  }
-
-  // stop connection to controller
-  Serial.println();
-  Serial.println("closing connection");
-  client.stop();
-  
+void mqttCallback(char* topic, byte* payload, unsigned int length)
+{
   // send received code to switcher
+  switcher.setProtocol(1);
+  switcher.setPulseLength(309);
+  switcher.setRepeatTransmit(25);
   switcher.send("110111101110011000110001"); // first button
   switcher.send("110111101110011000110100"); // second button
 
-  // inform about stopping of receiving process
-  delay(1000);
-  digitalWrite(LED_PIN, LOW);
-
   // sleep for next command read
   delay(20000);
+}
+
+void reconnectMqttClient()
+{
+// Loop until we're reconnected
+  while (!mqttClient.connected()) {
+    String clientId = "ESP8266Client-";
+    clientId += String(random(0xffff), HEX);
+    // Attempt to connect
+    if (mqttClient.connect(clientId.c_str())) {
+      mqttClient.subscribe(SECRET_MQTT_BROCKER_TOPIC);
+    } else {
+      delay(5000);
+    }
+  }
 }
