@@ -1,4 +1,4 @@
-#include <FS.h>
+#include <configurator.h>
 #include <RCSwitch.h>
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
@@ -13,11 +13,13 @@
 #define SECRET_WIFI_AUTOCONFIGURE_PASSWORD "zGatQd12la"
 
 #define PROTOCOL_VERSION "0.0.1"
-#define CONFIGURATION_PATH "/config.json"
 
-int TRANSMITTER_PIN = 2;
-char* configFilePath = CONFIGURATION_PATH;
+int TRANSMITTER_PIN = 1;
+int RECEIVER_PIN = 2;
+
 bool shouldSaveConfiguration = false;
+
+configuration conf;
 
 // See https://github.com/sui77/rc-switch/ for details
 RCSwitch switcher = RCSwitch();
@@ -25,49 +27,10 @@ RCSwitch switcher = RCSwitch();
 // See https://github.com/knolleary/pubsubclient
 PubSubClient mqttClient;
 
-char mqttHost[40];
-char mqttPort[6]  = "1883";
-char mqttUser[40];
-char mqttPassword[40];
-
 String MACAddress;
 
 const char* commandsSubscribeMqttTopic;
 const char* provisionPublishMqttTopic = "provision";
-
-void loadConfiguration() {
-  if (SPIFFS.begin()) {
-    if (SPIFFS.exists(configFilePath)) {
-      File configFile = SPIFFS.open(configFilePath, "r");
-      if (configFile) {
-        size_t size = configFile.size();
-        std::unique_ptr<char[]> buf(new char[size]);
-
-        configFile.readBytes(buf.get(), size);
-        DynamicJsonDocument json(1024);
-        deserializeJson(json, buf.get());
-
-        strcpy(mqttHost, json["mqttHost"]);
-        strcpy(mqttPort, json["mqttPort"]);
-        strcpy(mqttUser, json["mqttUser"]);
-        strcpy(mqttPassword, json["mqttPassword"]);
-      }
-    }
-  }
-}
-
-void storeConfiguration() {
-  DynamicJsonDocument doc(1024);
-  doc["mqttHost"] = mqttHost;
-  doc["mqttPort"] = mqttPort;
-  doc["mqttUser"] = mqttUser;
-  doc["mqttPassword"] = mqttPassword;
-
-  File configFile = SPIFFS.open(configFilePath, "w");
-
-  serializeJson(doc, configFile);
-  configFile.close();
-}
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   DynamicJsonDocument doc(1024);
@@ -87,15 +50,22 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       switcher.setPulseLength(pulseLength);
       switcher.setRepeatTransmit(repeats);
       switcher.send(code);
+    } else if (command == "scan") {
+      
+    } else if (command == "reset") {
+      WiFi.disconnect();
+      delay(2000);
+      ESP.restart();
+    } else if (command == "restart") {
+      ESP.restart();
     }
   }
 
   // sleep for next command read
-  delay(20000);
+  delay(5000);
 }
 
 void reconnectMqttClient(char* user, char* password) {
-  // Loop until we're reconnected
   while (!mqttClient.connected()) {
     String clientId = "RadioKeyHub_" + MACAddress;
 
@@ -112,7 +82,10 @@ void reconnectMqttClient(char* user, char* password) {
       String payload;
       serializeJson(doc, payload);
 
-      mqttClient.publish(provisionPublishMqttTopic, payload.c_str());
+      mqttClient.publish(
+        provisionPublishMqttTopic, 
+        payload.c_str()
+      );
     } else {
       delay(5000);
     }
@@ -126,6 +99,11 @@ void wifiManagerSaveConfigCallback() {
 void setup() {
   Serial.begin(115200);
 
+  MACAddress = WiFi.macAddress();
+
+  // configure application
+  conf = loadConfiguration();
+
   // configure switcher
   switcher.enableTransmit(TRANSMITTER_PIN);
 
@@ -136,16 +114,16 @@ void setup() {
   wifiManager.setSaveConfigCallback(wifiManagerSaveConfigCallback);
 
   // Configure custom params during wifi management
-  WiFiManagerParameter mqttHostParameter("mqtt_host", "MQTT host", mqttPort, 40);
+  WiFiManagerParameter mqttHostParameter("mqtt_host", "MQTT host", conf.mqttHost, 40);
   wifiManager.addParameter(&mqttHostParameter);
 
-  WiFiManagerParameter mqttPortParameter("mqtt_port", "MQTT port", mqttPort, 6);
+  WiFiManagerParameter mqttPortParameter("mqtt_port", "MQTT port", conf.mqttPort, 6);
   wifiManager.addParameter(&mqttPortParameter);
 
-  WiFiManagerParameter mqttUserParameter("mqtt_user", "MQTT user", mqttUser, 40);
+  WiFiManagerParameter mqttUserParameter("mqtt_user", "MQTT user", conf.mqttUser, 40);
   wifiManager.addParameter(&mqttUserParameter);
 
-  WiFiManagerParameter mqttPasswordParameter("mqtt_password", "MQTT password", mqttPassword, 40);
+  WiFiManagerParameter mqttPasswordParameter("mqtt_password", "MQTT password", conf.mqttPassword, 40);
   wifiManager.addParameter(&mqttPasswordParameter);
 
   // connect wifi
@@ -155,23 +133,23 @@ void setup() {
   );
 
   // renew params from config
-  strcpy(mqttHost, mqttHostParameter.getValue());
-  strcpy(mqttPort, mqttPortParameter.getValue());
-  strcpy(mqttUser, mqttUserParameter.getValue());
-  strcpy(mqttPassword, mqttPasswordParameter.getValue());
-
   if (shouldSaveConfiguration) {
-    storeConfiguration();
+    strcpy(conf.mqttHost, mqttHostParameter.getValue());
+    strcpy(conf.mqttPort, mqttPortParameter.getValue());
+    strcpy(conf.mqttUser, mqttUserParameter.getValue());
+    strcpy(conf.mqttPassword, mqttPasswordParameter.getValue());
+
+    storeConfiguration(conf);
+
     shouldSaveConfiguration = false;
   }
 
-  MACAddress = WiFi.macAddress();
-
   // MQTT client
   mqttClient.setServer(
-    mqttHost, 
-    atoi(mqttPort)
+    conf.mqttHost, 
+    atoi(conf.mqttPort)
   );
+
   mqttClient.setCallback(mqttCallback);
 
   commandsSubscribeMqttTopic = MACAddress.c_str();
@@ -179,7 +157,7 @@ void setup() {
 
 void loop() {  
   if (!mqttClient.connected()) {
-    reconnectMqttClient(mqttUser, mqttPassword);
+    reconnectMqttClient(conf.mqttUser, conf.mqttPassword);
   }
 
   mqttClient.loop();
