@@ -23,7 +23,7 @@ RCSwitch switcher = RCSwitch();
 PubSubClient mqttClient;
 
 char mqttHost[40];
-char mqttPort[6]  = "8161";
+char mqttPort[6]  = "1883";
 char mqttUser[40];
 char mqttPassword[40];
 
