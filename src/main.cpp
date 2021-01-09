@@ -12,8 +12,11 @@
 #define SECRET_WIFI_AUTOCONFIGURE_SSID "RadioKey"
 #define SECRET_WIFI_AUTOCONFIGURE_PASSWORD "zGatQd12la"
 
+#define PROTOCOL_VERSION "0.0.1"
+#define CONFIGURATION_PATH "/config.json"
+
 int TRANSMITTER_PIN = 2;
-char* configFilePath = "/config.json";
+char* configFilePath = CONFIGURATION_PATH;
 bool shouldSaveConfiguration = false;
 
 // See https://github.com/sui77/rc-switch/ for details
@@ -29,10 +32,10 @@ char mqttPassword[40];
 
 String MACAddress;
 
-const char* commandsMqttTopic;
+const char* commandsSubscribeMqttTopic;
+const char* provisionPublishMqttTopic = "provision";
 
-void loadConfiguration() 
-{
+void loadConfiguration() {
   if (SPIFFS.begin()) {
     if (SPIFFS.exists(configFilePath)) {
       File configFile = SPIFFS.open(configFilePath, "r");
@@ -50,18 +53,27 @@ void loadConfiguration()
         strcpy(mqttPassword, json["mqttPassword"]);
       }
     }
-  } else {
-    Serial.println("failed to mount FS");
   }
-  //end read
 }
 
-void mqttCallback(char* topic, byte* payload, unsigned int length)
-{
+void storeConfiguration() {
+  DynamicJsonDocument doc(1024);
+  doc["mqttHost"] = mqttHost;
+  doc["mqttPort"] = mqttPort;
+  doc["mqttUser"] = mqttUser;
+  doc["mqttPassword"] = mqttPassword;
+
+  File configFile = SPIFFS.open(configFilePath, "w");
+
+  serializeJson(doc, configFile);
+  configFile.close();
+}
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
   DynamicJsonDocument doc(1024);
   deserializeJson(doc, payload);
 
-  if (topic == commandsMqttTopic) {
+  if (topic == commandsSubscribeMqttTopic) {
     String command = doc["command"];
 
     if (command == "send") {
@@ -82,23 +94,32 @@ void mqttCallback(char* topic, byte* payload, unsigned int length)
   delay(20000);
 }
 
-void reconnectMqttClient(char* user, char* password)
-{
-// Loop until we're reconnected
+void reconnectMqttClient(char* user, char* password) {
+  // Loop until we're reconnected
   while (!mqttClient.connected()) {
     String clientId = "RadioKeyHub_" + MACAddress;
 
     // Attempt to connect
     if (mqttClient.connect(clientId.c_str(), user, password)) {
-      mqttClient.subscribe(commandsMqttTopic);
+      // subscribe to commands
+      mqttClient.subscribe(commandsSubscribeMqttTopic);
+      
+      // provision devive
+      DynamicJsonDocument doc(1024);
+      doc["mac"] = MACAddress;
+      doc["protocolVersion"] = PROTOCOL_VERSION;
+
+      String payload;
+      serializeJson(doc, payload);
+
+      mqttClient.publish(provisionPublishMqttTopic, payload.c_str());
     } else {
       delay(5000);
     }
   }
 }
 
-void wifiManagerSaveConfigCallback()
-{
+void wifiManagerSaveConfigCallback() {
   shouldSaveConfiguration = true;
 }
 
@@ -140,17 +161,7 @@ void setup() {
   strcpy(mqttPassword, mqttPasswordParameter.getValue());
 
   if (shouldSaveConfiguration) {
-    DynamicJsonDocument doc(1024);
-    doc["mqttHost"] = mqttHost;
-    doc["mqttPort"] = mqttPort;
-    doc["mqttUser"] = mqttUser;
-    doc["mqttPassword"] = mqttPassword;
-
-    File configFile = SPIFFS.open(configFilePath, "w");
-
-    serializeJson(doc, configFile);
-    configFile.close();
-
+    storeConfiguration();
     shouldSaveConfiguration = false;
   }
 
@@ -163,7 +174,7 @@ void setup() {
   );
   mqttClient.setCallback(mqttCallback);
 
-  commandsMqttTopic = MACAddress.c_str();
+  commandsSubscribeMqttTopic = MACAddress.c_str();
 }
 
 void loop() {  
