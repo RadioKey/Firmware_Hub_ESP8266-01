@@ -140,16 +140,15 @@ void setup() {
   strcpy(mqttPassword, mqttPasswordParameter.getValue());
 
   if (shouldSaveConfiguration) {
-    DynamicJsonBuffer jsonBuffer;
-    JsonObject& json = jsonBuffer.createObject();
-    json["mqttHost"] = mqttHost;
-    json["mqttPort"] = mqttPort;
-    json["mqttUser"] = mqttUser;
-    json["mqttPassword"] = mqttPassword;
+    DynamicJsonDocument doc(1024);
+    doc["mqttHost"] = mqttHost;
+    doc["mqttPort"] = mqttPort;
+    doc["mqttUser"] = mqttUser;
+    doc["mqttPassword"] = mqttPassword;
 
     File configFile = SPIFFS.open(configFilePath, "w");
 
-    json.printTo(configFile);
+    serializeJson(doc, configFile);
     configFile.close();
 
     shouldSaveConfiguration = false;
@@ -160,7 +159,7 @@ void setup() {
   // MQTT client
   mqttClient.setServer(
     mqttHost, 
-    mqttPort
+    atoi(mqttPort)
   );
   mqttClient.setCallback(mqttCallback);
 

@@ -19,3 +19,5 @@ Use following server for test purposes
 HTTP Server started at http://localhost:8161
 Artemis Jolokia REST API available at http://localhost:8161/console/jolokia
 Artemis Console available at http://localhost:8161/console
+EPOLL Acceptor at 0.0.0.0:61616 for protocols [CORE,MQTT,AMQP,STOMP,HORNETQ,OPENWIRE]EPOLL Acceptor at 0.0.0.0:1883 for protocols [MQTT]
+
