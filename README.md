@@ -8,16 +8,3 @@
 * GPIO0 has to be LOW during boot (can be HIGH once in bootloader mode)
 * You can provoque a reset of the card by a rising edge on the RESET pin.
 
-## MQTT Server
-
-Use following server for test purposes
-
-./bin/artemis create radiokey --require-login --user test --password test
-./radiokey/bin/artemis run - start broker
-./radiokey/bin/artemis-service start - start broker in background
-
-HTTP Server started at http://localhost:8161
-Artemis Jolokia REST API available at http://localhost:8161/console/jolokia
-Artemis Console available at http://localhost:8161/console
-EPOLL Acceptor at 0.0.0.0:61616 for protocols [CORE,MQTT,AMQP,STOMP,HORNETQ,OPENWIRE]EPOLL Acceptor at 0.0.0.0:1883 for protocols [MQTT]
-
