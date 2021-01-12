@@ -4,10 +4,10 @@
 #define CONFIGURATION_PATH "/config.json"
 
 struct configuration {
-    char mqttHost[40];
+    char mqttHost[40] = "";
     char mqttPort[6]  = "1883";
-    char mqttUser[40];
-    char mqttPassword[40];
+    char mqttUser[40] = "";
+    char mqttPassword[40] = "";
 };
 
 configuration loadConfiguration();

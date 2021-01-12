@@ -5,6 +5,8 @@ char* configFilePath = CONFIGURATION_PATH;
 configuration loadConfiguration() {
   configuration conf;
 
+  // SPIFFS.format();
+  
   if (SPIFFS.begin()) {
     if (SPIFFS.exists(configFilePath)) {
       File configFile = SPIFFS.open(configFilePath, "r");

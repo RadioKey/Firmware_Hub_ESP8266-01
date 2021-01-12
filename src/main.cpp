@@ -5,6 +5,8 @@
 #include <WiFiManager.h>
 #include <ArduinoJson.h>
 
+#define DEBUG true
+
 /**
  * This access point credentials used to start hub in access point mode 
  * and configure connection of hab as station to access point
@@ -15,7 +17,11 @@
 #define PROTOCOL_VERSION "0.0.1"
 
 int TRANSMITTER_PIN = 1;
-int RECEIVER_PIN = 2;
+
+/**
+ * For ESP8266 interrupt equals pin
+ */
+int RECEIVER_INTERRUPT = 2;
 
 bool shouldSaveConfiguration = false;
 
@@ -29,34 +35,70 @@ PubSubClient mqttClient;
 
 String MACAddress;
 
-const char* commandsSubscribeMqttTopic;
-const char* provisionPublishMqttTopic = "provision";
+const char* subscribeMqttTopic; // Unique topic per hub defined as MAC address of device
+const char* publishMqttTopic = "response";
+
+void debug(const char* message)
+{
+  #if defined(DEBUG) && DEBUG == true
+  Serial.println(message);
+  #endif
+}
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  DynamicJsonDocument doc(1024);
-  deserializeJson(doc, payload);
+  debug("MQTT callback:");
 
-  if (topic == commandsSubscribeMqttTopic) {
-    String command = doc["command"];
+  DynamicJsonDocument request(1024);
+  deserializeJson(request, payload);
+
+  if (topic == subscribeMqttTopic) {
+    String command = request["command"];
+    debug(command.c_str());
 
     if (command == "send") {
       // send received code to switcher
-      int protocol = doc["protocol"];
-      int repeats = doc["repeats"];
-      int pulseLength = doc["pulseLength"];
-      const char* code = doc["code"];
+      int protocol = request["protocol"];
+      int repeats = request["repeats"];
+      int pulseLength = request["pulseLength"];
+      const char* code = request["code"];
 
+      debug("Sending code");
+      switcher.enableTransmit(TRANSMITTER_PIN);
       switcher.setProtocol(protocol);
       switcher.setPulseLength(pulseLength);
       switcher.setRepeatTransmit(repeats);
       switcher.send(code);
     } else if (command == "scan") {
-      
-    } else if (command == "reset") {
+      debug("Scanning code");
+      switcher.enableReceive(RECEIVER_INTERRUPT);
+      if (switcher.available()) {
+        debug("Code found");
+        DynamicJsonDocument response(1024);
+        response["command"] = "scanResult";
+        response["macAddress"] = MACAddress;
+        response["value"] = (String)switcher.getReceivedValue();
+        response["bitLength"] = (String)switcher.getReceivedBitlength();
+        response["protocol"] = (String)switcher.getReceivedProtocol();
+        response["delay"] = (String)switcher.getReceivedDelay();
+        //response["raw"] = switcher.getReceivedRawdata();
+
+        String payload;
+        serializeJson(response, payload);
+
+        mqttClient.publish(
+          publishMqttTopic, 
+          payload.c_str()
+        );
+
+        switcher.resetAvailable();
+      }
+    } else if (command == "reconfigure") {
+      debug("Forget configuration");
       WiFi.disconnect();
       delay(2000);
       ESP.restart();
     } else if (command == "restart") {
+      debug("Restart");
       ESP.restart();
     }
   }
@@ -66,13 +108,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void reconnectMqttClient(char* user, char* password) {
+  debug("Connecting to MQTT server");
+
   while (!mqttClient.connected()) {
     String clientId = "RadioKeyHub_" + MACAddress;
 
     // Attempt to connect
     if (mqttClient.connect(clientId.c_str(), user, password)) {
       // subscribe to commands
-      mqttClient.subscribe(commandsSubscribeMqttTopic);
+      mqttClient.subscribe(subscribeMqttTopic);
       
       // provision devive
       DynamicJsonDocument doc(1024);
@@ -83,10 +127,11 @@ void reconnectMqttClient(char* user, char* password) {
       serializeJson(doc, payload);
 
       mqttClient.publish(
-        provisionPublishMqttTopic, 
+        publishMqttTopic, 
         payload.c_str()
       );
     } else {
+      debug("Can not connect to MQTT server, try restart...");
       delay(5000);
     }
   }
@@ -102,15 +147,17 @@ void setup() {
   MACAddress = WiFi.macAddress();
 
   // configure application
+  debug("Loading configuration");
   conf = loadConfiguration();
 
-  // configure switcher
-  switcher.enableTransmit(TRANSMITTER_PIN);
-
   // Wifi management
+  debug("Obtaining WiFi credentials");
   WiFiManager wifiManager;
-  wifiManager.setDebugOutput(false);
-  wifiManager.setConfigPortalTimeout(30);
+
+  // wifiManager.resetSettings();
+
+  wifiManager.setDebugOutput(DEBUG);
+  wifiManager.setConfigPortalTimeout(180);
   wifiManager.setSaveConfigCallback(wifiManagerSaveConfigCallback);
 
   // Configure custom params during wifi management
@@ -132,8 +179,11 @@ void setup() {
     SECRET_WIFI_AUTOCONFIGURE_PASSWORD
   );
 
+  debug("WiFi configured");
+
   // renew params from config
   if (shouldSaveConfiguration) {
+    debug("Storing configuration");
     strcpy(conf.mqttHost, mqttHostParameter.getValue());
     strcpy(conf.mqttPort, mqttPortParameter.getValue());
     strcpy(conf.mqttUser, mqttUserParameter.getValue());
@@ -145,6 +195,7 @@ void setup() {
   }
 
   // MQTT client
+  debug("Configuring MQTT server host and port");
   mqttClient.setServer(
     conf.mqttHost, 
     atoi(conf.mqttPort)
@@ -152,7 +203,7 @@ void setup() {
 
   mqttClient.setCallback(mqttCallback);
 
-  commandsSubscribeMqttTopic = MACAddress.c_str();
+  subscribeMqttTopic = MACAddress.c_str();
 }
 
 void loop() {  
