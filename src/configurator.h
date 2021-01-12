@@ -1,6 +1,3 @@
-#include <FS.h>
-#include <ArduinoJson.h>
-
 #define CONFIGURATION_PATH "/config.json"
 
 struct configuration {
@@ -11,4 +8,5 @@ struct configuration {
 };
 
 configuration loadConfiguration();
+
 void storeConfiguration(configuration conf);

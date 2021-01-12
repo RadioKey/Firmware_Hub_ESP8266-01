@@ -45,6 +45,24 @@ void debug(const char* message)
   #endif
 }
 
+void sendMQTTHeartbeat()
+{
+  DynamicJsonDocument doc(1024);
+  doc["command"] = "heartbeat";
+  doc["mac"] = MACAddress;
+  doc["protocolVersion"] = PROTOCOL_VERSION;
+
+  String payload;
+  serializeJson(doc, payload);
+
+  mqttClient.publish(
+    publishMqttTopic, 
+    payload.c_str()
+  );
+
+  debug("Heartbeat sent");
+}
+
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   debug("MQTT callback:");
 
@@ -103,11 +121,14 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     }
   }
 
+  // send heartbeat
+  sendMQTTHeartbeat();
+
   // sleep for next command read
   delay(5000);
 }
 
-void reconnectMqttClient(char* user, char* password) {
+void connectMqttClient(const char* user, const char* password) {
   debug("Connecting to MQTT server");
 
   while (!mqttClient.connected()) {
@@ -115,21 +136,14 @@ void reconnectMqttClient(char* user, char* password) {
 
     // Attempt to connect
     if (mqttClient.connect(clientId.c_str(), user, password)) {
+      debug("Connected to MQTT successfully");
+
+      // heartbeat
+      sendMQTTHeartbeat();
+
       // subscribe to commands
+      debug("Subscribe to MQTT topic");
       mqttClient.subscribe(subscribeMqttTopic);
-      
-      // provision devive
-      DynamicJsonDocument doc(1024);
-      doc["mac"] = MACAddress;
-      doc["protocolVersion"] = PROTOCOL_VERSION;
-
-      String payload;
-      serializeJson(doc, payload);
-
-      mqttClient.publish(
-        publishMqttTopic, 
-        payload.c_str()
-      );
     } else {
       debug("Can not connect to MQTT server, try restart...");
       delay(5000);
@@ -156,7 +170,10 @@ void setup() {
 
   // wifiManager.resetSettings();
 
-  wifiManager.setDebugOutput(DEBUG);
+  # if defined(DEBUG) && DEBUG == true
+  wifiManager.setDebugOutput(true);
+  # endif
+
   wifiManager.setConfigPortalTimeout(180);
   wifiManager.setSaveConfigCallback(wifiManagerSaveConfigCallback);
 
@@ -208,7 +225,7 @@ void setup() {
 
 void loop() {  
   if (!mqttClient.connected()) {
-    reconnectMqttClient(conf.mqttUser, conf.mqttPassword);
+    connectMqttClient(conf.mqttUser, conf.mqttPassword);
   }
 
   mqttClient.loop();
