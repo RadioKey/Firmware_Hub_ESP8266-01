@@ -31,12 +31,15 @@ configuration conf;
 RCSwitch switcher = RCSwitch();
 
 // See https://github.com/knolleary/pubsubclient
-PubSubClient mqttClient;
+WiFiClient wifiClient;
+PubSubClient mqttClient(wifiClient);
 
 String MACAddress;
 
 const char* subscribeMqttTopic; // Unique topic per hub defined as MAC address of device
 const char* publishMqttTopic = "response";
+
+String mqttClientId;
 
 void debug(const char* message)
 {
@@ -64,61 +67,64 @@ void sendMQTTHeartbeat()
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  debug("MQTT callback:");
+  debug("MQTT callback called");
 
-  DynamicJsonDocument request(1024);
-  deserializeJson(request, payload);
+  char* charPayload = new char[length];
+  for (unsigned int i = 0; i < length; i++) {
+    charPayload[i] = (char)payload[i];
+  }
 
-  if (topic == subscribeMqttTopic) {
-    String command = request["command"];
-    debug(command.c_str());
+  DynamicJsonDocument request(2048);
+  deserializeJson(request, charPayload);
 
-    if (command == "send") {
-      // send received code to switcher
-      int protocol = request["protocol"];
-      int repeats = request["repeats"];
-      int pulseLength = request["pulseLength"];
-      const char* code = request["code"];
+  const char* command = request["command"];
 
-      debug("Sending code");
-      switcher.enableTransmit(TRANSMITTER_PIN);
-      switcher.setProtocol(protocol);
-      switcher.setPulseLength(pulseLength);
-      switcher.setRepeatTransmit(repeats);
-      switcher.send(code);
-    } else if (command == "scan") {
-      debug("Scanning code");
-      switcher.enableReceive(RECEIVER_INTERRUPT);
-      if (switcher.available()) {
-        debug("Code found");
-        DynamicJsonDocument response(1024);
-        response["command"] = "scanResult";
-        response["macAddress"] = MACAddress;
-        response["value"] = (String)switcher.getReceivedValue();
-        response["bitLength"] = (String)switcher.getReceivedBitlength();
-        response["protocol"] = (String)switcher.getReceivedProtocol();
-        response["delay"] = (String)switcher.getReceivedDelay();
-        //response["raw"] = switcher.getReceivedRawdata();
+  if (strcmp(command, "send") == 0) {
+    debug("Sending code command received");
 
-        String payload;
-        serializeJson(response, payload);
+    // send received code to switcher
+    int protocol = 1; //(int)request["protocol"];
+    int repeats = 25; //(int)request["repeats"];
+    int pulseLength = 309; //(int)request["pulseLength"];
+    const char* code = request["code"];
+    
+    switcher.enableTransmit(TRANSMITTER_PIN);
+    switcher.setProtocol(protocol);
+    switcher.setPulseLength(pulseLength);
+    switcher.setRepeatTransmit(repeats);
+    switcher.send(code);
+  } else if (strcmp(command, "scan") == 0) {
+    debug("Scanning code command received");
+    switcher.enableReceive(RECEIVER_INTERRUPT);
+    if (switcher.available()) {
+      debug("Code found");
+      DynamicJsonDocument response(1024);
+      response["command"] = "scanResult";
+      response["macAddress"] = MACAddress;
+      response["value"] = (String)switcher.getReceivedValue();
+      response["bitLength"] = (String)switcher.getReceivedBitlength();
+      response["protocol"] = (String)switcher.getReceivedProtocol();
+      response["delay"] = (String)switcher.getReceivedDelay();
+      //response["raw"] = switcher.getReceivedRawdata();
 
-        mqttClient.publish(
-          publishMqttTopic, 
-          payload.c_str()
-        );
+      String payload;
+      serializeJson(response, payload);
 
-        switcher.resetAvailable();
-      }
-    } else if (command == "reconfigure") {
-      debug("Forget configuration");
-      WiFi.disconnect();
-      delay(2000);
-      ESP.restart();
-    } else if (command == "restart") {
-      debug("Restart");
-      ESP.restart();
+      mqttClient.publish(
+        publishMqttTopic, 
+        payload.c_str()
+      );
+
+      switcher.resetAvailable();
     }
+  } else if (strcmp(command, "reconfigure") == 0) {
+    debug("Forget configuration command received");
+    WiFi.disconnect();
+    delay(2000);
+    ESP.restart();
+  } else if (strcmp(command, "restart") == 0) {
+    debug("Restart command received");
+    ESP.restart();
   }
 
   // send heartbeat
@@ -129,13 +135,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void connectMqttClient(const char* user, const char* password) {
-  debug("Connecting to MQTT server");
+  debug("Starting to connect to MQTT server with credentials:");
+  debug(user);
+  debug(password);
 
   while (!mqttClient.connected()) {
-    String clientId = "RadioKeyHub_" + MACAddress;
-
     // Attempt to connect
-    if (mqttClient.connect(clientId.c_str(), user, password)) {
+    debug("Try to connect to MQTT server");
+
+    if (mqttClient.connect(mqttClientId.c_str(), user, password)) {
       debug("Connected to MQTT successfully");
 
       // heartbeat
@@ -159,16 +167,15 @@ void setup() {
   Serial.begin(115200);
 
   MACAddress = WiFi.macAddress();
+  mqttClientId = "RadioKey_" + MACAddress;
 
   // configure application
   debug("Loading configuration");
   conf = loadConfiguration();
 
   // Wifi management
-  debug("Obtaining WiFi credentials");
   WiFiManager wifiManager;
-
-  // wifiManager.resetSettings();
+  debug("Obtaining WiFi credentials");
 
   # if defined(DEBUG) && DEBUG == true
   wifiManager.setDebugOutput(true);
@@ -211,11 +218,22 @@ void setup() {
     shouldSaveConfiguration = false;
   }
 
+  // if configuration not exists, force
+  if (strcmp(conf.mqttHost, "") == 0) {
+    debug("Empty configuration after successfull wifi connection, restart configuration");
+    wifiManager.resetSettings();
+    delay(1000);
+    ESP.restart();
+  }
+
   // MQTT client
-  debug("Configuring MQTT server host and port");
+  debug("Configuring MQTT server host and port:");
+  debug(conf.mqttHost);
+  debug(conf.mqttPort);
+
   mqttClient.setServer(
     conf.mqttHost, 
-    atoi(conf.mqttPort)
+    (__uint16_t)atoi(conf.mqttPort)
   );
 
   mqttClient.setCallback(mqttCallback);

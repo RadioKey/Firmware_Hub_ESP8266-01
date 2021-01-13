@@ -15,19 +15,31 @@ configuration loadConfiguration() {
     if (LittleFS.exists(configFilePath)) {
       File configFile = LittleFS.open(configFilePath, "r");
       if (configFile) {
+        // read from file
         size_t size = configFile.size();
-        std::unique_ptr<char[]> buf(new char[size]);
+        char buf[size];
+        configFile.readBytes(buf, size);
 
-        configFile.readBytes(buf.get(), size);
+        Serial.write("Config: ");
+        Serial.println(buf);
+
+        // parse json
         DynamicJsonDocument json(1024);
-        deserializeJson(json, buf.get());
+        deserializeJson(json, buf);
 
+        // fill struct
         strcpy(conf.mqttHost, json["mqttHost"]);
         strcpy(conf.mqttPort, json["mqttPort"]);
         strcpy(conf.mqttUser, json["mqttUser"]);
         strcpy(conf.mqttPassword, json["mqttPassword"]);
+      } else {
+        Serial.println("Can not open configuration file");
       }
+    } else {
+      Serial.println("Configuration file not exists");
     }
+  } else {
+    Serial.println("Begin FS error");
   }
 
   return conf;
