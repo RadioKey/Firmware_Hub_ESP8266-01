@@ -83,9 +83,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     debug("Sending code command received");
 
     // send received code to switcher
-    int protocol = 1; //(int)request["protocol"];
-    int repeats = 25; //(int)request["repeats"];
-    int pulseLength = 309; //(int)request["pulseLength"];
+    int protocol = (int)request["protocol"];
+    int repeats = (int)request["repeats"];
+    int pulseLength = (int)request["pulseLength"];
     const char* code = request["code"];
     
     switcher.enableTransmit(TRANSMITTER_PIN);
