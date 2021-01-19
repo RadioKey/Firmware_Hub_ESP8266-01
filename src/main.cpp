@@ -14,6 +14,7 @@
 #define SECRET_WIFI_AUTOCONFIGURE_SSID "RadioKey"
 #define SECRET_WIFI_AUTOCONFIGURE_PASSWORD "zGatQd12la"
 
+#define DEVICE_ID "HUBESP01"
 #define PROTOCOL_VERSION "0.0.1"
 
 int TRANSMITTER_PIN = 1;
@@ -53,6 +54,7 @@ void sendMQTTHeartbeat()
   DynamicJsonDocument doc(1024);
   doc["command"] = "heartbeat";
   doc["mac"] = MACAddress;
+  doc["deviceId"] = DEVICE_ID;
   doc["protocolVersion"] = PROTOCOL_VERSION;
 
   String payload;
