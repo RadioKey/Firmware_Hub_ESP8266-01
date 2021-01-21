@@ -20,9 +20,6 @@ configuration loadConfiguration() {
         char buf[size];
         configFile.readBytes(buf, size);
 
-        Serial.write("Config: ");
-        Serial.println(buf);
-
         // parse json
         DynamicJsonDocument json(1024);
         deserializeJson(json, buf);
@@ -32,14 +29,8 @@ configuration loadConfiguration() {
         strcpy(conf.mqttPort, json["mqttPort"]);
         strcpy(conf.mqttUser, json["mqttUser"]);
         strcpy(conf.mqttPassword, json["mqttPassword"]);
-      } else {
-        Serial.println("Can not open configuration file");
       }
-    } else {
-      Serial.println("Configuration file not exists");
     }
-  } else {
-    Serial.println("Begin FS error");
   }
 
   return conf;

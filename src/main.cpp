@@ -5,7 +5,7 @@
 #include <WiFiManager.h>
 #include <ArduinoJson.h>
 
-#define DEBUG true
+#define DEBUG false
 
 /**
  * This access point credentials used to start hub in access point mode 
@@ -64,13 +64,10 @@ void sendMQTTHeartbeat()
     publishMqttTopic, 
     payload.c_str()
   );
-
-  debug("Heartbeat sent");
 }
 
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  debug("MQTT callback called");
-
+void mqttCallback(char* topic, byte* payload, unsigned int length) 
+{
   char* charPayload = new char[length];
   for (unsigned int i = 0; i < length; i++) {
     charPayload[i] = (char)payload[i];
@@ -82,102 +79,103 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   const char* command = request["command"];
 
   if (strcmp(command, "send") == 0) {
-    debug("Sending code command received");
-
     // send received code to switcher
     int protocol = (int)request["protocol"];
     int repeats = (int)request["repeats"];
     int pulseLength = (int)request["pulseLength"];
-    const char* code = request["code"];
+    int bitLength = (int)request["bitLength"]; // used to get first bits from code
+    int code = (int)request["code"];
     
     switcher.enableTransmit(TRANSMITTER_PIN);
     switcher.setProtocol(protocol);
     switcher.setPulseLength(pulseLength);
     switcher.setRepeatTransmit(repeats);
-    switcher.send(code);
+    switcher.send(code, bitLength);
   } else if (strcmp(command, "scan") == 0) {
-    debug("Scanning code command received");
-    switcher.enableReceive(RECEIVER_INTERRUPT);
-    if (switcher.available()) {
-      debug("Code found");
-      DynamicJsonDocument response(1024);
-      response["command"] = "scanResult";
-      response["macAddress"] = MACAddress;
-      response["value"] = (String)switcher.getReceivedValue();
-      response["bitLength"] = (String)switcher.getReceivedBitlength();
-      response["protocol"] = (String)switcher.getReceivedProtocol();
-      response["delay"] = (String)switcher.getReceivedDelay();
-      //response["raw"] = switcher.getReceivedRawdata();
-
-      String payload;
-      serializeJson(response, payload);
-
-      mqttClient.publish(
-        publishMqttTopic, 
-        payload.c_str()
-      );
-
-      switcher.resetAvailable();
+    int repeats = (int)request["repeats"];
+    if (repeats < 5) {
+      repeats = 5;
     }
+
+    int delayMs = (int)request["delayMs"];
+    if (delayMs < 100) {
+      delayMs = 100;
+    }
+
+    switcher.enableReceive(RECEIVER_INTERRUPT);
+
+    for (int repeat = 0; repeat < repeats; repeat++) {
+      if (switcher.available()) {
+        DynamicJsonDocument response(1024);
+        response["command"] = "codeFound";
+        response["macAddress"] = MACAddress;
+        response["value"] = (String)switcher.getReceivedValue();
+        response["bitLength"] = (String)switcher.getReceivedBitlength();
+        response["protocol"] = (String)switcher.getReceivedProtocol();
+        response["delay"] = (String)switcher.getReceivedDelay();
+
+        String payload;
+        serializeJson(response, payload);
+
+        mqttClient.publish(
+          publishMqttTopic, 
+          payload.c_str()
+        );
+
+        switcher.resetAvailable();
+
+        break;
+      }
+
+      delay(delayMs);
+    }
+    
   } else if (strcmp(command, "reconfigure") == 0) {
-    debug("Forget configuration command received");
     WiFi.disconnect();
     delay(2000);
     ESP.restart();
   } else if (strcmp(command, "restart") == 0) {
-    debug("Restart command received");
     ESP.restart();
   }
 
-  // send heartbeat
+  // send heartbeat after every command
   sendMQTTHeartbeat();
-
-  // sleep for next command read
-  delay(5000);
 }
 
-void connectMqttClient(const char* user, const char* password) {
-  debug("Starting to connect to MQTT server with credentials:");
-  debug(user);
-  debug(password);
-
+void connectMqttClient(const char* user, const char* password) 
+{
   while (!mqttClient.connected()) {
     // Attempt to connect
-    debug("Try to connect to MQTT server");
-
     if (mqttClient.connect(mqttClientId.c_str(), user, password)) {
-      debug("Connected to MQTT successfully");
 
       // heartbeat
       sendMQTTHeartbeat();
 
       // subscribe to commands
-      debug("Subscribe to MQTT topic");
       mqttClient.subscribe(subscribeMqttTopic);
     } else {
-      debug("Can not connect to MQTT server, try restart...");
       delay(5000);
     }
   }
 }
 
-void wifiManagerSaveConfigCallback() {
+void wifiManagerSaveConfigCallback() 
+{
   shouldSaveConfiguration = true;
 }
 
-void setup() {
+void setup() 
+{
   Serial.begin(115200);
 
   MACAddress = WiFi.macAddress();
   mqttClientId = "RadioKey_" + MACAddress;
 
   // configure application
-  debug("Loading configuration");
   conf = loadConfiguration();
 
   // Wifi management
   WiFiManager wifiManager;
-  debug("Obtaining WiFi credentials");
 
   # if defined(DEBUG) && DEBUG == true
   wifiManager.setDebugOutput(true);
@@ -205,11 +203,8 @@ void setup() {
     SECRET_WIFI_AUTOCONFIGURE_PASSWORD
   );
 
-  debug("WiFi configured");
-
   // renew params from config
   if (shouldSaveConfiguration) {
-    debug("Storing configuration");
     strcpy(conf.mqttHost, mqttHostParameter.getValue());
     strcpy(conf.mqttPort, mqttPortParameter.getValue());
     strcpy(conf.mqttUser, mqttUserParameter.getValue());
@@ -222,17 +217,12 @@ void setup() {
 
   // if configuration not exists, force
   if (strcmp(conf.mqttHost, "") == 0) {
-    debug("Empty configuration after successfull wifi connection, restart configuration");
     wifiManager.resetSettings();
     delay(1000);
     ESP.restart();
   }
 
   // MQTT client
-  debug("Configuring MQTT server host and port:");
-  debug(conf.mqttHost);
-  debug(conf.mqttPort);
-
   mqttClient.setServer(
     conf.mqttHost, 
     (__uint16_t)atoi(conf.mqttPort)
@@ -243,10 +233,14 @@ void setup() {
   subscribeMqttTopic = MACAddress.c_str();
 }
 
-void loop() {  
+void loop() 
+{  
   if (!mqttClient.connected()) {
     connectMqttClient(conf.mqttUser, conf.mqttPassword);
   }
 
   mqttClient.loop();
+
+  // sleep for next command read
+  delay(2000);
 }
